@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenCV.js Intelligent Cutout</title>
+    <style>
+      #canvas,
+      #resultCanvas {
+        border: 1px solid black;
+        flex: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <input type="file" id="fileInput" />
+    <div class="wrapper">
+      <canvas id="canvas" width="640" height="480"></canvas>
+      <canvas id="resultCanvas" width="640" height="480"></canvas>
+    </div>
+    <script async src="./libs/opencv.js" onload="onOpenCvReady();"></script>
+    <script>
+      let img = null;
+      let canvas = document.getElementById("canvas");
+      let resultCanvas = document.getElementById("resultCanvas");
+      let ctx = canvas.getContext("2d");
+      let resultImg = null;
+
+      function onOpenCvReady() {
+        document
+          .getElementById("fileInput")
+          .addEventListener("change", (event) => {
+            let file = event.target.files[0];
+            let reader = new FileReader();
+            reader.onload = function (e) {
+              let imgElement = new Image();
+              imgElement.onload = function () {
+                canvas.width = imgElement.width;
+                canvas.height = imgElement.height;
+                resultCanvas.width = imgElement.width;
+                resultCanvas.height = imgElement.height;
+                ctx.drawImage(imgElement, 0, 0);
+                img = cv.imread(imgElement);
+                cv.cvtColor(img, img, cv.COLOR_RGBA2RGB);
+
+                // Initialize resultImg with the same size and type as img
+                resultImg = new cv.Mat(img.rows, img.cols, img.type());
+                resultImg.setTo(new cv.Scalar(0, 0, 0, 0)); // Set it to transparent
+              };
+              imgElement.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+          });
+
+        canvas.addEventListener("click", (event) => {
+          if (img === null || resultImg === null) return;
+          let rect = canvas.getBoundingClientRect();
+          let x = event.clientX - rect.left;
+          let y = event.clientY - rect.top;
+          let roiSize = 150; // Increased ROI size for better recognition
+
+          // Define the ROI rectangle
+          let rectX = Math.max(0, x - roiSize / 2);
+          let rectY = Math.max(0, y - roiSize / 2);
+          let rectWidth = Math.min(roiSize, img.cols - rectX);
+          let rectHeight = Math.min(roiSize, img.rows - rectY);
+
+          let roi = new cv.Rect(rectX, rectY, rectWidth, rectHeight);
+          let mask = new cv.Mat();
+          let bgdModel = new cv.Mat();
+          let fgdModel = new cv.Mat();
+
+          // Initialize mask for grabCut
+          mask.create(img.rows, img.cols, cv.CV_8UC1);
+          mask.setTo(new cv.Scalar(cv.GC_BGD));
+
+          // Set the ROI to probable foreground
+          let roiRect = new cv.Rect(rectX, rectY, rectWidth, rectHeight);
+          mask.roi(roiRect).setTo(new cv.Scalar(cv.GC_PR_FGD));
+
+          // Edge detection
+          let edges = new cv.Mat();
+          cv.Canny(img.roi(roiRect), edges, 100, 200);
+
+          // Apply GrabCut algorithm with more iterations
+          cv.grabCut(
+            img,
+            mask,
+            roiRect,
+            bgdModel,
+            fgdModel,
+            15,
+            cv.GC_INIT_WITH_MASK
+          );
+
+          // Prepare the mask for displaying the result
+          for (let i = 0; i < mask.rows; i++) {
+            for (let j = 0; j < mask.cols; j++) {
+              if (
+                mask.ucharAt(i, j) == cv.GC_FGD ||
+                mask.ucharAt(i, j) == cv.GC_PR_FGD
+              ) {
+                mask.ucharPtr(i, j)[0] = 255;
+              } else {
+                mask.ucharPtr(i, j)[0] = 0;
+              }
+            }
+          }
+
+          let result = new cv.Mat();
+          img.copyTo(result, mask);
+
+          // Merge result with previous results
+          cv.add(resultImg, result, resultImg);
+
+          // Display result
+          cv.imshow("resultCanvas", resultImg);
+
+          // Cleanup
+          mask.delete();
+          bgdModel.delete();
+          fgdModel.delete();
+          result.delete();
+          edges.delete();
+        });
+      }
+    </script>
+  </body>
+</html>
